@@ -86,6 +86,25 @@ app.get('/', (req, res) => {
   res.json({ message: 'Tournament PDF Header Automation System API' });
 });
 
+// Health check endpoint
+app.get('/health', async (req, res) => {
+  try {
+    const db = require('./config/db');
+    const result = await db.query('SELECT NOW() as time');
+    res.json({
+      status: 'OK',
+      database: 'Connected',
+      time: result.rows[0].time
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'ERROR',
+      database: 'Disconnected',
+      error: error.message
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
