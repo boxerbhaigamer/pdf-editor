@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS tournaments (
     name VARCHAR(255) NOT NULL,
     date DATE,
     location VARCHAR(255),
+    gdrive_folder_id VARCHAR(255),
     created_by INTEGER REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -85,6 +86,7 @@ CREATE TABLE IF NOT EXISTS templates (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     content TEXT,
+    fields JSONB,
     created_by INTEGER REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
