@@ -57,6 +57,7 @@ CREATE TABLE files (
     edited_file_url TEXT,
     status VARCHAR(50) DEFAULT 'uploaded',
     uploaded_by INTEGER REFERENCES users(id),
+    google_drive_url TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

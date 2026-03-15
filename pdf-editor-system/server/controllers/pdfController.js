@@ -32,6 +32,22 @@ const uploadFiles = async (req, res) => {
       const filePath = path.join(uploadDir, uniqueName);
       await fs.writeFile(filePath, file.buffer);
 
+      let googleDriveUrl = null;
+      // Upload raw file to Google Drive Original folder
+      if (process.env.GOOGLE_DRIVE_CLIENT_ID && process.env.GOOGLE_DRIVE_REFRESH_TOKEN) {
+        try {
+          const tournament = await Tournament.findById(tournamentId);
+          if (tournament && tournament.gdrive_original_folder_id) {
+            console.log('Uploading original PDF to Google Drive...');
+            const driveData = await uploadToGoogleDrive(file.buffer, file.originalname, tournament.gdrive_original_folder_id);
+            // Convert webViewLink to embeddable preview link
+            googleDriveUrl = driveData.webViewLink.replace('/view?usp=drivesdk', '/preview').replace('/view', '/preview');
+          }
+        } catch (driveErr) {
+          console.error('Failed to upload original file to Google Drive.', driveErr);
+        }
+      }
+
       // Create file record in database
       const fileRecord = await File.create({
         tournamentId,
@@ -39,21 +55,9 @@ const uploadFiles = async (req, res) => {
         originalFileUrl: filePath,
         editedFileUrl: null,
         status: 'uploaded',
-        uploadedBy
+        uploadedBy,
+        googleDriveUrl: googleDriveUrl
       });
-
-      // Upload raw file to Google Drive Original folder
-      if (process.env.GOOGLE_DRIVE_CLIENT_ID && process.env.GOOGLE_DRIVE_REFRESH_TOKEN) {
-        try {
-          const tournament = await Tournament.findById(tournamentId);
-          if (tournament && tournament.gdrive_original_folder_id) {
-            console.log('Uploading original PDF to Google Drive...');
-            await uploadToGoogleDrive(file.buffer, file.originalname, tournament.gdrive_original_folder_id);
-          }
-        } catch (driveErr) {
-          console.error('Failed to upload original file to Google Drive.', driveErr);
-        }
-      }
 
       uploadedFiles.push(fileRecord);
     }
@@ -77,11 +81,11 @@ const getFileById = async (req, res) => {
     // Add a URL the client can use to preview the PDF
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const originalFileName = path.basename(file.original_file_url);
-    file.preview_url = `${baseUrl}/uploads/${originalFileName}`;
+    file.preview_url = file.google_drive_url || `${baseUrl}/uploads/${originalFileName}`;
 
     if (file.edited_file_url) {
       const editedFileName = path.basename(file.edited_file_url);
-      file.edited_preview_url = `${baseUrl}/uploads/${editedFileName}`;
+      file.edited_preview_url = file.google_drive_url || `${baseUrl}/uploads/${editedFileName}`;
     }
 
     res.json(file);
@@ -125,37 +129,39 @@ const applyTemplate = async (req, res) => {
     const editedFilePath = path.join(path.dirname(file.original_file_url), editedFileName);
     await fs.writeFile(editedFilePath, editedPdfBuffer);
 
-    // Update file record in database
-    const updatedFile = await File.update(fileId, {
-      fileName: file.file_name,
-      originalFileUrl: file.original_file_url,
-      editedFileUrl: editedFilePath,
-      status: 'edited'
-    });
-
-    // Add preview URL
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    updatedFile.edited_preview_url = `${baseUrl}/uploads/${editedFileName}`;
-
     // Upload to Google Drive if credentials exist
-    let googleDriveData = null;
+    let googleDriveUrl = null;
+    let googleDriveData = null; // Initialize googleDriveData
     if (process.env.GOOGLE_DRIVE_CLIENT_ID && process.env.GOOGLE_DRIVE_REFRESH_TOKEN) {
       try {
         console.log('Uploading edited PDF to Google Drive...');
         const tournament = await Tournament.findById(file.tournament_id);
         const folderId = tournament ? tournament.gdrive_edited_folder_id : (process.env.GOOGLE_DRIVE_FOLDER_ID || null);
         googleDriveData = await uploadToGoogleDrive(editedPdfBuffer, editedFileName, folderId);
-        updatedFile.google_drive_url = googleDriveData.webViewLink;
+        // Convert webViewLink to embeddable preview link
+        googleDriveUrl = googleDriveData.webViewLink.replace('/view?usp=drivesdk', '/preview').replace('/view', '/preview');
       } catch (driveErr) {
         console.error('Failed to upload to Google Drive. File saved locally.');
         console.error('FULL DRIVE ERROR:', driveErr);
       }
     }
 
+    // Update file record in database
+    const updatedFile = await File.update(fileId, {
+      fileName: file.file_name,
+      originalFileUrl: file.original_file_url,
+      editedFileUrl: editedFilePath,
+      status: 'edited',
+      googleDriveUrl: googleDriveUrl
+    });
+
+    // Add preview URL
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    updatedFile.edited_preview_url = updatedFile.google_drive_url || `${baseUrl}/uploads/${editedFileName}`;
+
     res.json({
       message: 'Template applied successfully',
-      file: updatedFile,
-      googleDrive: googleDriveData
+      file: updatedFile
     });
   } catch (error) {
     console.error('Error applying template:', error);
@@ -205,26 +211,29 @@ const batchApplyTemplate = async (req, res) => {
         const editedFilePath = path.join(path.dirname(file.original_file_url), editedFileName);
         await fs.writeFile(editedFilePath, editedPdfBuffer);
 
-        // Update DB
-        const updatedFile = await File.update(fileId, {
-          fileName: file.file_name,
-          originalFileUrl: file.original_file_url,
-          editedFileUrl: editedFilePath,
-          status: 'edited'
-        });
-
         // Upload to Google Drive if credentials exist
+        let googleDriveUrl = null;
         if (process.env.GOOGLE_DRIVE_CLIENT_ID && process.env.GOOGLE_DRIVE_REFRESH_TOKEN) {
           try {
             console.log('Uploading batch edited PDF to Google Drive...');
             const tournament = await Tournament.findById(file.tournament_id);
             const folderId = tournament ? tournament.gdrive_edited_folder_id : (process.env.GOOGLE_DRIVE_FOLDER_ID || null);
             const googleDriveData = await uploadToGoogleDrive(editedPdfBuffer, editedFileName, folderId);
-            updatedFile.google_drive_url = googleDriveData.webViewLink;
+            // Convert webViewLink to embeddable preview link
+            googleDriveUrl = googleDriveData.webViewLink.replace('/view?usp=drivesdk', '/preview').replace('/view', '/preview');
           } catch (driveErr) {
             console.error('Failed to upload batch edited file to Google Drive.', driveErr);
           }
         }
+
+        // Update DB
+        const updatedFile = await File.update(fileId, {
+          fileName: file.file_name,
+          originalFileUrl: file.original_file_url,
+          editedFileUrl: editedFilePath,
+          status: 'edited',
+          googleDriveUrl: googleDriveUrl
+        });
 
         results.push(updatedFile);
       } catch (err) {
